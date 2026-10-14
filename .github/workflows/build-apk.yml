@@ -1,0 +1,77 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: 'false'
+
+      - name: Install Android 35 platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # Works with files uploaded at the repository root and also
+      # with one accidental enclosing directory.
+      - name: Locate Android project
+        id: locate
+        shell: bash
+        run: |
+          if [[ -f settings.gradle && -d app ]]; then
+            project='.'
+          else
+            project=''
+            while IFS= read -r candidate; do
+              folder="$(dirname "$candidate")"
+              if [[ -d "$folder/app" ]]; then
+                project="$folder"
+                break
+              fi
+            done < <(find . -mindepth 2 -maxdepth 3 -name settings.gradle -type f | sort)
+          fi
+          if [[ -z "$project" ]]; then
+            echo 'ERROR: Cannot locate settings.gradle and app/ in uploaded files.' >&2
+            exit 1
+          fi
+          echo "project=$project" >> "$GITHUB_OUTPUT"
+          echo "Android project directory: $project"
+
+      - name: Build APK
+        run: gradle --no-daemon -p "${{ steps.locate.outputs.project }}" :app:assembleDebug
+
+      - name: Prepare APK download
+        run: |
+          mkdir -p dist
+          cp "${{ steps.locate.outputs.project }}/app/build/outputs/apk/debug/app-debug.apk" dist/yerin-gambling-diary.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: yerin-gambling-diary-apk
+          path: dist/yerin-gambling-diary.apk
+          if-no-files-found: error
+          retention-days: 30
